@@ -1,0 +1,161 @@
+#include <iostream>
+#include <vector>
+#include <queue>
+#include <stack>
+#include <omp.h>
+#include <chrono>
+
+using namespace std;
+
+// ---------------- SEQUENTIAL BFS ----------------
+void BFS_seq(vector<vector<int>> &g, int start) {
+    int n = g.size();
+    vector<bool> vis(n, false);
+    queue<int> q;
+
+    q.push(start);
+    vis[start] = true;
+
+    while (!q.empty()) {
+        int node = q.front(); q.pop();
+
+        for (int neigh : g[node]) {
+            if (!vis[neigh]) {
+                vis[neigh] = true;
+                q.push(neigh);
+            }
+        }
+    }
+}
+
+// ---------------- SEQUENTIAL DFS ----------------
+void DFS_seq(vector<vector<int>> &g, int start) {
+    int n = g.size();
+    vector<bool> vis(n, false);
+    stack<int> st;
+
+    st.push(start);
+
+    while (!st.empty()) {
+        int node = st.top(); st.pop();
+
+        if (vis[node]) continue;
+        vis[node] = true;
+
+        for (int neigh : g[node]) {
+            if (!vis[neigh]) {
+                st.push(neigh);
+            }
+        }
+    }
+}
+
+// ---------------- PARALLEL BFS (level-based) ----------------
+void BFS_par(vector<vector<int>> &g, int start) {
+    int n = g.size();
+    vector<bool> vis(n, false);
+    queue<int> q;
+
+    q.push(start);
+    vis[start] = true;
+
+    while (!q.empty()) {
+        int size = q.size();
+        vector<int> level;
+
+        for (int i = 0; i < size; i++) {
+            level.push_back(q.front());
+            q.pop();
+        }
+
+        #pragma omp parallel for
+        for (int i = 0; i < level.size(); i++) {
+            int node = level[i];
+
+            for (int neigh : g[node]) {
+                if (!vis[neigh]) {
+                    #pragma omp critical
+                    {
+                        if (!vis[neigh]) {
+                            vis[neigh] = true;
+                            q.push(neigh);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------- PARALLEL DFS (task based) ----------------
+void DFS_par_util(vector<vector<int>> &g, int node, vector<bool> &vis) {
+    #pragma omp critical
+    {
+        if (vis[node]) return;
+        vis[node] = true;
+    }
+
+    #pragma omp parallel for
+    for (int i = 0; i < g[node].size(); i++) {
+        int neigh = g[node][i];
+
+        if (!vis[neigh]) {
+            #pragma omp task shared(g, vis)
+            DFS_par_util(g, neigh, vis);
+        }
+    }
+}
+
+void DFS_par(vector<vector<int>> &g, int start) {
+    int n = g.size();
+    vector<bool> vis(n, false);
+
+    #pragma omp parallel
+    {
+        #pragma omp single
+        DFS_par_util(g, start, vis);
+    }
+}
+
+// ---------------- MAIN ----------------
+int main() {
+
+    int n = 10000;  // increase for better timing difference
+    vector<vector<int>> g(n);
+
+    // simple graph (random-like chain structure)
+    for (int i = 0; i < n - 1; i++) {
+        g[i].push_back(i + 1);
+        if (i + 2 < n) g[i].push_back(i + 2);
+    }
+
+    auto start = chrono::high_resolution_clock::now();
+    BFS_seq(g, 0);
+    auto end = chrono::high_resolution_clock::now();
+    cout << "Sequential BFS: "
+         << chrono::duration<double>(end - start).count()
+         << " sec\n";
+
+    start = chrono::high_resolution_clock::now();
+    BFS_par(g, 0);
+    end = chrono::high_resolution_clock::now();
+    cout << "Parallel BFS:   "
+         << chrono::duration<double>(end - start).count()
+         << " sec\n";
+
+    start = chrono::high_resolution_clock::now();
+    DFS_seq(g, 0);
+    end = chrono::high_resolution_clock::now();
+    cout << "Sequential DFS: "
+         << chrono::duration<double>(end - start).count()
+         << " sec\n";
+
+    start = chrono::high_resolution_clock::now();
+    DFS_par(g, 0);
+    end = chrono::high_resolution_clock::now();
+    cout << "Parallel DFS:   "
+         << chrono::duration<double>(end - start).count()
+         << " sec\n";
+
+    return 0;
+}
